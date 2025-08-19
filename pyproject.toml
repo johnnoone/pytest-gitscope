@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 dev = ["mypy>=1.17.1", "pytest>=8.4.1", "ruff>=0.12.9"]
 
 [project.entry-points.pytest11]
-git_diff = "pytest_accurate.plugin"
+git_diff = "pytest_gitscope.plugin"
 
 [tool.ruff]
 
