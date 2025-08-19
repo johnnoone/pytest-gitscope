@@ -3,19 +3,34 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
-from weakref import WeakKeyDictionary
 
 import pytest
 
 from .diff import get_changed_files
 from .selector import select_files
 
-POST_REPORT: WeakKeyDictionary[pytest.Config, str] = WeakKeyDictionary()
+POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
+REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("collect", "collection")
     group.addoption("--gitscope", help="Select tests based on git revision")
+
+
+def pytest_configure(config: pytest.Config):
+    # TODO: is it working with xdist?
+    # if hasattr(config, "workerinput"):
+    #     return  # don't run configure on xdist worker nodes
+    if rev := config.getoption("--gitscope"):
+        config.stash[REVISION_KEY] = rev
+
+
+def pytest_report_header(config: pytest.Config, start_path: Any) -> str | None:
+    if rev := config.stash.get(REVISION_KEY, None):
+        return f"gitscope: Analyzing changes from {rev}"
+    else:
+        return None
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -24,7 +39,7 @@ def pytest_collection_modifyitems(
 ) -> None:
     if not items:
         return
-    rev = config.getoption("--gitscope")
+    rev = config.stash.get(REVISION_KEY, None)
     if rev is None:
         return
 
@@ -48,7 +63,7 @@ def pytest_collection_modifyitems(
     if short_circuit_files:
         # A file that may declare some external dependencies have been changed.
         # it safer to not try to filter
-        POST_REPORT[config] = (
+        config.stash[POST_REPORT_KEY] = (
             "The pytest-gitscope plugin won't try to deselect some tests, "
             f"because these files ({', '.join(sorted(map(str, short_circuit_files)))}) have been changed since {rev}"
         )
@@ -63,7 +78,7 @@ def pytest_collection_modifyitems(
     if changed_conftest_files:
         # Some conftest.py have been changed.
         # it safer to not try to filter
-        POST_REPORT[config] = (
+        config.stash[POST_REPORT_KEY] = (
             "The pytest-gitscope plugin won't try to deselect some tests, "
             f"because it cannot detect changes introduced into ({', '.join(sorted(map(str, changed_conftest_files)))}) since {rev}"
         )
@@ -80,14 +95,13 @@ def pytest_collection_modifyitems(
     if affected_conftest_files:
         # Some conftest.py files have been affected by changes.
         # Because they do declare fixtures, it is safer to not try to filter
-        POST_REPORT[config] = (
+        config.stash[POST_REPORT_KEY] = (
             "The pytest-gitscope plugin won't try to deselect some tests, "
             f"because file ({', '.join(sorted(map(str, affected_conftest_files)))}) have been affected by dependency changes since {rev}"
         )
         return
 
     test_files = {item.path.relative_to(root) for item in items}
-
     affected_test_files = select_files(
         root=root,
         target_files=test_files,
@@ -98,7 +112,7 @@ def pytest_collection_modifyitems(
     remaining = []
     deselected = []
     for item in items:
-        if item.path.relative_to(root) not in affected_test_files:
+        if item.path.relative_to(root) in affected_test_files:
             remaining.append(item)
         else:
             deselected.append(item)
@@ -106,7 +120,7 @@ def pytest_collection_modifyitems(
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = remaining
-        POST_REPORT[config] = (
+        config.stash[POST_REPORT_KEY] = (
             "Some tests have been deselected by pytest-gitscope plugin, "
             f"because they have not been affected by the changes from {rev}"
         )
@@ -115,6 +129,6 @@ def pytest_collection_modifyitems(
 def pytest_report_collectionfinish(
     config: pytest.Config, start_path: Any, startdir: Any, items: Any
 ) -> str | list[str]:
-    if data := POST_REPORT.get(config):
+    if data := config.stash.get(POST_REPORT_KEY, default=None):
         return data
     return []
