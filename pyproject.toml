@@ -1,11 +1,35 @@
 [project]
 name = "pytest-gitscope"
 version = "0.1.0"
-description = "Add your description here"
+description = "A pragmatic pytest plugin that runs only the tests that matter, and ship faster"
 readme = "README.md"
 authors = [{ name = "Xavier Barbosa", email = "clint.northwood@gmail.com" }]
 requires-python = ">=3.11"
-dependencies = ["pytest>=8.4.1"]
+dependencies = ["pytest>=7.0.0"]
+license = "MIT"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Utilities",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/johnnoone/pytest-gitscope"
+Source = "https://github.com/johnnoone/pytest-gitscope"
+Tracker = "https://github.com/johnnoone/pytest-gitscope/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -20,4 +44,4 @@ git_diff = "pytest_gitscope.plugin"
 [tool.ruff]
 
 [tool.ruff.lint]
-extend-select = ["I"]
+extend-select = ["B", "I", "RUF"]
