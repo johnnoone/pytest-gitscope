@@ -2,9 +2,12 @@
 
 **Smart test filtering based on Git revisions**
 
-A pytest plugin that intelligently filters and runs only the tests affected by changes in a specific Git revision or commit range. Instead of running your entire test suite, pytest-gitscope analyzes your Git history to determine which tests are relevant to your recent changes.
+pytest-gitscope is a pragmatic pytest plugin that runs only the tests that matter. By analyzing your Git history, it intelligently determines which tests are affected by your changes, helping you ship faster.
+
 
 ## Features
+
+Testing everything on every change is thorough but impractical. pytest-gitscope follows the principle of "test what changed" – giving you confidence in your modifications while respecting your time.
 
 - 🎯 **Targeted Testing** - Run only tests related to modified files
 - ⚡ **Fast Execution** - Dramatically reduce test execution time
@@ -27,7 +30,7 @@ pytest --gitscope main..feature-branch
 Perfect for CI/CD pipelines and local development to focus on what matters most.
 
 
-## Understanding pytest-gitscope with a Complete Example
+## Understanding pytest-gitscope with a complete example
 
 Let's walk through a real-world example to see exactly how `pytest-gitscope` works.
 
@@ -129,13 +132,13 @@ $ pytest --gitscope HEAD~1
 $ pytest --gitscope HEAD~1
 ========================== test session starts ==========================
 gitscope: Analyzing changes from HEAD~1
-gitscope: Found 2 changed files
-gitscope: Selected 8 tests from 2 test files (7 tests skipped)
+collected 15 items / 7 deselected / 8 selected
+Some tests have been deselected by pytest-gitscope plugin, because they have not been affected by the changes from HEAD~1
 
 tests/test_calculator.py ✓✓✓✓✓
 tests/test_integration.py ✓✓✓
 
-=================== 8 passed, 7 skipped in 12.34s ===================
+=================== 8 passed, 7 deselected in 12.34s ====================
 ```
 
 ### Step 5: Compare the Results
