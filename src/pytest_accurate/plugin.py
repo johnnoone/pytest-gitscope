@@ -7,15 +7,22 @@ from typing import Any
 import pytest
 
 from .diff import get_changed_files
-from .selector import list_dependencies, select_files, ModulesRegistry
+from .selector import Resolver, Selector
 
 POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
 REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
+USE_SHORT_CIRCUIT_KEY: pytest.StashKey[bool] = pytest.StashKey()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("collect", "collection")
     group.addoption("--gitscope", help="Select tests based on git revision")
+    group.addoption(
+        "--gitscope-no-short-circuits",
+        action="store_true",
+        default=False,
+        help="Do not use the short circuits",
+    )
 
     # Let user register custom short circuit files
     parser.addini(
@@ -26,11 +33,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config):
-    # TODO: is it working with xdist?
-    # if hasattr(config, "workerinput"):
-    #     return  # don't run configure on xdist worker nodes
     if rev := config.getoption("--gitscope"):
         config.stash[REVISION_KEY] = rev
+        config.stash[USE_SHORT_CIRCUIT_KEY] = not config.getoption(
+            "--gitscope-no-short-circuits"
+        )
 
 
 def pytest_report_header(config: pytest.Config, start_path: Any) -> str | None:
@@ -49,46 +56,49 @@ def pytest_collection_modifyitems(
     rev = config.stash.get(REVISION_KEY, None)
     if rev is None:
         return
+
+    use_short_circuit = config.stash.get(USE_SHORT_CIRCUIT_KEY, True)
     root = session.startpath
     changed_files = get_changed_files(root, before=rev)
 
-    short_circuit_files = changed_files & {
-        Path("pyproject.toml"),
-        Path("requirements.txt"),
-        Path("poetry.lock"),
-        Path("uv.lock"),
-        Path("pylock.toml"),
-        Path("Pipfile.lock"),
-        Path("Pipfile"),
-        Path("pdm.lock"),
-        Path("setup.cfg"),
-        Path("setup.py"),
-        Path("requirements.in"),
-        Path("pytest.ini"),
-    }
+    if use_short_circuit:
+        short_circuit_files = changed_files & {
+            Path("pyproject.toml"),
+            Path("requirements.txt"),
+            Path("poetry.lock"),
+            Path("uv.lock"),
+            Path("pylock.toml"),
+            Path("Pipfile.lock"),
+            Path("Pipfile"),
+            Path("pdm.lock"),
+            Path("setup.cfg"),
+            Path("setup.py"),
+            Path("requirements.in"),
+            Path("pytest.ini"),
+        }
 
-    # Use user register custom short circuit files, because we got not match with default ones
-    if not short_circuit_files and (
-        custom_paths := config.getini("gitscope_short_circuits")
-    ):
-        custom_path: Path
-        unfolded_custom_paths: set[Path] = set()
-        for custom_path in custom_paths:
-            custom_path = custom_path.relative_to(root)
-            if "*" in str(custom_path):
-                unfolded_custom_paths.update(Path().glob(str(custom_path)))
-            else:
-                unfolded_custom_paths.add(custom_path)
-        short_circuit_files = changed_files & unfolded_custom_paths
+        # Use user register custom short circuit files, because we got not match with default ones
+        if not short_circuit_files and (
+            custom_paths := config.getini("gitscope_short_circuits")
+        ):
+            custom_path: Path
+            unfolded_custom_paths: set[Path] = set()
+            for custom_path in custom_paths:
+                custom_path = custom_path.relative_to(root)
+                if "*" in str(custom_path):
+                    unfolded_custom_paths.update(Path().glob(str(custom_path)))
+                else:
+                    unfolded_custom_paths.add(custom_path)
+            short_circuit_files = changed_files & unfolded_custom_paths
 
-    if short_circuit_files:
-        # A file that may declare some external dependencies have been changed.
-        # it safer to not try to filter
-        config.stash[POST_REPORT_KEY] = (
-            "The pytest-gitscope plugin won't try to deselect some tests, "
-            f"because these files ({', '.join(sorted(map(str, short_circuit_files)))}) have been changed since {rev}"
-        )
-        return
+        if short_circuit_files:
+            # A file that may declare some external dependencies have been changed.
+            # it safer to not try to filter
+            config.stash[POST_REPORT_KEY] = (
+                "The pytest-gitscope plugin won't try to deselect some tests, "
+                f"because these files ({', '.join(sorted(map(str, short_circuit_files)))}) have been changed since {rev}"
+            )
+            return
 
     # Track changes of conftest.py files. if a conftest.py is changed, then short circuit the whole thing
     changed_conftest_files = {
@@ -105,8 +115,9 @@ def pytest_collection_modifyitems(
         )
         return
 
-    module_registry = ModulesRegistry.from_modules(
-        root=root, modules=sys.modules.copy()
+    selector = Selector(
+        changed_files=changed_files,
+        resolver=Resolver.from_modules(root=root, modules=sys.modules),
     )
 
     # those will be our bases
@@ -122,11 +133,7 @@ def pytest_collection_modifyitems(
         if (conftest_file := test_dir / "conftest.py") and conftest_file.exists()
     }
 
-    affected_conftest_files = select_files(
-        target_files=conftest_files,
-        changed_files=changed_files,
-        modules_registry=module_registry,
-    )
+    affected_conftest_files = selector.select_files(target_files=conftest_files)
     if affected_conftest_files:
         # Some conftest.py files have been affected by changes.
         # Because they do declare fixtures, it is safer to not try to filter
@@ -136,14 +143,7 @@ def pytest_collection_modifyitems(
         )
         return
 
-    affected_test_files = select_files(
-        target_files=test_files,
-        changed_files=changed_files,
-        modules_registry=module_registry,
-    )
-
-    # free memory
-    list_dependencies.cache_clear()
+    affected_test_files = selector.select_files(target_files=test_files)
 
     remaining = []
     deselected = []

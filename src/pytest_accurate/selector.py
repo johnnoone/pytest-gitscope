@@ -1,23 +1,32 @@
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import cache
 from importlib.util import find_spec
 from pathlib import Path
 from types import ModuleType
-from typing import Self
+from typing import NamedTuple, Self, TypeAlias
+
+Name: TypeAlias = str
+
+
+class Module(NamedTuple):
+    name: Name
+    file: Path | None
 
 
 @dataclass
-class ModulesRegistry:
+class Resolver:
     root: Path
-    by_fullnames: dict[str, Path | None] = field(default_factory=dict)
+    by_names: dict[Name, Path | None] = field(default_factory=dict)
+    by_files: dict[Path, Name] = field(default_factory=dict)
 
     @classmethod
     def from_modules(cls, root: Path, modules: dict[str, ModuleType]) -> Self:
-        by_fullnames: dict[str, Path | None] = {}
+        by_names: dict[Name, Path | None] = {}
+        by_files: dict[Path, Name] = {}
         for name, module in modules.items():
             if (
                 (filepath := getattr(module, "__file__", None))
@@ -25,137 +34,112 @@ class ModulesRegistry:
                 and root in file.parents
             ):
                 file = file.relative_to(root)
-                by_fullnames[name] = file
+                by_names[name] = file
+                by_files[file] = name
             else:
-                by_fullnames[name] = None
-        return cls(root=root, by_fullnames=by_fullnames)
+                by_names[name] = None
+        return cls(root=root, by_names=by_names, by_files=by_files)
 
     def __post_init__(self) -> None:
-        self.inverse = {
-            val: key for key, val in self.by_fullnames.items() if val is not None
-        }
+        self.infer_dependencies = cache(self.infer_dependencies)  # type: ignore[method-assign]
+        self.get_module = cache(self.get_module)  # type: ignore[method-assign]
 
-    def get_name(self, file: Path) -> str | None:
-        return self.inverse.get(file)
+    def get_module_by_file(self, file: Path) -> Module | None:
+        if name := self.by_files.get(file):
+            return Module(name, file)
+        else:
+            return None
 
-    def get(self, name: str) -> Path | None:
-        if name not in self.by_fullnames:
-            # in case of name not already present into cache, fallback to importlib.util.find_spec
-            file: Path | None
-            try:
-                spec = find_spec(name)
-            except ModuleNotFoundError:
-                file = self.by_fullnames[name] = None
+    def get_module(self, name: str) -> Module | None:
+        try:
+            file = self.by_names[name]
+            return Module(name, file)
+        except KeyError:
+            pass
+
+        # Fetch from find_spec
+        try:
+            spec = find_spec(name)
+        except ModuleNotFoundError:
+            return None
+
+        if spec:
+            if (
+                spec.origin
+                and (file := Path(spec.origin))
+                and (self.root in file.parents)
+            ):
+                file = file.relative_to(self.root)
             else:
-                if (
-                    spec
-                    and spec.origin
-                    and (tmp := Path(spec.origin))
-                    and (self.root in tmp.parents)
-                ):
-                    file = self.by_fullnames[name] = tmp.relative_to(self.root)
-                else:
-                    file = self.by_fullnames[name] = None
-            return file
-        return self.by_fullnames.get(name)
+                file = None
+            return Module(name, file)
+        return None
 
+    def infer_dependencies(self, mod: Module) -> set[Name]:
+        dependency_names: set[str] = set()
+        if not mod.file:
+            return dependency_names
 
-def select_files(
-    target_files: set[Path],
-    changed_files: set[Path],
-    modules_registry: ModulesRegistry,
-) -> set[Path]:
-    selection = target_files & changed_files
-    target_files = target_files - selection
-
-    if not target_files:
-        # we already took everything
-        return selection
-
-    queued: dict[Path, set[tuple[str, Path]]] = {}
-
-    for target_file in list(target_files):
-        test_package = modules_registry.get_name(target_file)
-        acc = set()
-        for dep_fullname in list_dependencies(target_file, package=test_package):
-            dep_file = modules_registry.get(dep_fullname)
-            if dep_file in changed_files:
-                target_files.discard(target_file)
-                selection.add(target_file)
-                break
-            elif dep_file:
-                acc.add((dep_fullname, dep_file))
-        if acc:
-            # find recursively
-            queued[target_file] = acc
-
-    explored: dict[Path, set[Path]] = defaultdict(set)
-    for _ in range(100):
-        tmp, queued = queued.items(), {}
-        for target_file, dependencies in tmp:
-            if target_file in selection:
-                # already done
-                continue
-
-            acc = set()
-            for dep_fullname, dep_file in dependencies:
-                if dep_file in explored[target_file]:
-                    continue
-                for sub_fullname in list_dependencies(dep_file, package=dep_fullname):
-                    if sub_file := modules_registry.get(sub_fullname):
-                        if sub_file in changed_files:
-                            target_files.discard(target_file)
-                            selection.add(target_file)
-                            break
-                        elif sub_file in explored[target_file]:
-                            continue
-                        else:
-                            acc.add((sub_fullname, sub_file))
-                explored[target_file].add(dep_file)
-            if acc and target_file not in selection:
-                # find recursively
-                queued[target_file] = acc
-
-        if not queued:
-            break
-    else:
-        raise RecursionError("Too many recursion")
-
-    return selection
-
-
-@cache
-def list_dependencies(file: Path, package: str | None = None) -> set[str]:
-    if package:
-        parts: list[str] = package.split(".")
-    else:
-        # guess a package from file. because it is relative to root, it should be safe
-        parts = file.with_suffix("").__str__().split("/")
-
-    dependencies: set[str] = set()
-    source = file.read_text()
-    tree = ast.parse(source, file)
-    for node in ast.walk(tree):
-        match node:
-            case ast.Import(names):
-                for name in names:
-                    dependencies.add(name.name)
-            case ast.ImportFrom(str(module), names, level):
-                if level:
+        source = mod.file.read_text()
+        parts = tuple(mod.name.split("."))
+        tree = ast.parse(source, filename=mod.file)
+        for node in ast.walk(tree):
+            match node:
+                case ast.Import(names):
+                    for name in names:
+                        dependency_names.add(name.name)
+                case ast.ImportFrom(None, names, level):
                     assert len(parts) >= level
-                    prefix = ".".join(parts[-level:]) + "." + module + "."
-                else:
-                    prefix = module + "."
-                for name in names:
-                    dependencies.add(prefix + name.name)
-            case ast.ImportFrom(None, names, level):
-                assert len(parts) >= level
-                prefix = ".".join(parts[-level:]) + "."
-                for name in names:
-                    dependencies.add(prefix + name.name)
+                    for name in names:
+                        dependency_names.add(".".join(parts[-level:] + (name.name,)))
+                case ast.ImportFrom(str(module), names, 0):
+                    for name in names:
+                        dependency_names.add(".".join((module, name.name)))
+                case ast.ImportFrom(str(module), names, level):
+                    assert len(parts) >= level
+                    for name in names:
+                        dependency_names.add(
+                            ".".join(parts[-level:] + (module, name.name))
+                        )
 
-    for dependency in list(dependencies):
-        while "." in dependency:
-            dependency, *_ = dependency.rpartition(".")
-            dependencies.add(dependency)
-    return dependencies
+        for dependency_name in list(dependency_names):
+            while "." in dependency_name:
+                dependency_name, *_ = dependency_name.rpartition(".")
+                dependency_names.add(dependency_name)
+        return dependency_names
+
+    def unwind_files(self, mod: Module) -> Iterator[Path]:
+        resolved: set[str] = set()
+        queue = [mod]
+        while queue:
+            mods, queue = queue, []
+            for mod in mods:
+                if mod.file:
+                    yield mod.file
+                resolved.add(mod.name)
+
+                for dependency_name in self.infer_dependencies(mod) - resolved:
+                    if dependency := self.get_module(name=dependency_name):
+                        queue.append(dependency)
+
+
+@dataclass
+class Selector:
+    changed_files: set[Path]
+    resolver: Resolver
+
+    def select_files(self, target_files: set[Path]) -> set[Path]:
+        selection = target_files & self.changed_files
+        target_files = target_files - selection
+
+        if not target_files:
+            # we already took everything
+            return selection
+
+        for target_file in target_files:
+            if mod := self.resolver.get_module_by_file(target_file):
+                for file in self.resolver.unwind_files(mod):
+                    if file in self.changed_files:
+                        selection.add(target_file)
+                        break
+        return selection
