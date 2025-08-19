@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from .diff import get_changed_files
-from .selector import select_files
+from .selector import list_dependencies, select_files, ModulesRegistry
 
 POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
 REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
@@ -49,7 +49,6 @@ def pytest_collection_modifyitems(
     rev = config.stash.get(REVISION_KEY, None)
     if rev is None:
         return
-
     root = session.startpath
     changed_files = get_changed_files(root, before=rev)
 
@@ -69,10 +68,10 @@ def pytest_collection_modifyitems(
     }
 
     # Use user register custom short circuit files, because we got not match with default ones
-    custom_paths: list[Path]
     if not short_circuit_files and (
         custom_paths := config.getini("gitscope_short_circuits")
     ):
+        custom_path: Path
         unfolded_custom_paths: set[Path] = set()
         for custom_path in custom_paths:
             custom_path = custom_path.relative_to(root)
@@ -106,13 +105,27 @@ def pytest_collection_modifyitems(
         )
         return
 
+    module_registry = ModulesRegistry.from_modules(
+        root=root, modules=sys.modules.copy()
+    )
+
+    # those will be our bases
+    test_files = {item.path.relative_to(root) for item in items}
+    test_dirs: set[Path] = set()
+    for test_file in test_files:
+        test_dirs.update(test_file.parents)
+
     # Track dependencies' changes into conftest.py files. if a conftest.py is affected by a dependency change, then short circuit the whole thing
-    conftest_files = {file.relative_to(root) for file in root.glob("**/conftest.py")}
+    conftest_files = {
+        conftest_file
+        for test_dir in test_dirs
+        if (conftest_file := test_dir / "conftest.py") and conftest_file.exists()
+    }
+
     affected_conftest_files = select_files(
-        root=root,
         target_files=conftest_files,
         changed_files=changed_files,
-        modules=sys.modules.copy(),
+        modules_registry=module_registry,
     )
     if affected_conftest_files:
         # Some conftest.py files have been affected by changes.
@@ -123,13 +136,14 @@ def pytest_collection_modifyitems(
         )
         return
 
-    test_files = {item.path.relative_to(root) for item in items}
     affected_test_files = select_files(
-        root=root,
         target_files=test_files,
         changed_files=changed_files,
-        modules=sys.modules.copy(),
+        modules_registry=module_registry,
     )
+
+    # free memory
+    list_dependencies.cache_clear()
 
     remaining = []
     deselected = []
@@ -138,7 +152,6 @@ def pytest_collection_modifyitems(
             remaining.append(item)
         else:
             deselected.append(item)
-
     if deselected:
         config.hook.pytest_deselected(items=deselected)
         items[:] = remaining

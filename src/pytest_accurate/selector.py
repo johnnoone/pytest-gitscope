@@ -2,16 +2,68 @@ from __future__ import annotations
 
 import ast
 from collections import defaultdict
+from dataclasses import dataclass, field
 from functools import cache
+from importlib.util import find_spec
 from pathlib import Path
 from types import ModuleType
+from typing import Self
+
+
+@dataclass
+class ModulesRegistry:
+    root: Path
+    by_fullnames: dict[str, Path | None] = field(default_factory=dict)
+
+    @classmethod
+    def from_modules(cls, root: Path, modules: dict[str, ModuleType]) -> Self:
+        by_fullnames: dict[str, Path | None] = {}
+        for name, module in modules.items():
+            if (
+                (filepath := getattr(module, "__file__", None))
+                and (file := Path(filepath))
+                and root in file.parents
+            ):
+                file = file.relative_to(root)
+                by_fullnames[name] = file
+            else:
+                by_fullnames[name] = None
+        return cls(root=root, by_fullnames=by_fullnames)
+
+    def __post_init__(self) -> None:
+        self.inverse = {
+            val: key for key, val in self.by_fullnames.items() if val is not None
+        }
+
+    def get_name(self, file: Path) -> str | None:
+        return self.inverse.get(file)
+
+    def get(self, name: str) -> Path | None:
+        if name not in self.by_fullnames:
+            # in case of name not already present into cache, fallback to importlib.util.find_spec
+            file: Path | None
+            try:
+                spec = find_spec(name)
+            except ModuleNotFoundError:
+                file = self.by_fullnames[name] = None
+            else:
+                if (
+                    spec
+                    and spec.origin
+                    and (tmp := Path(spec.origin))
+                    and (self.root in tmp.parents)
+                ):
+                    file = self.by_fullnames[name] = tmp.relative_to(self.root)
+                else:
+                    file = self.by_fullnames[name] = None
+            return file
+        return self.by_fullnames.get(name)
 
 
 def select_files(
-    root: Path,
     target_files: set[Path],
     changed_files: set[Path],
-    modules: dict[str, ModuleType],
+    modules_registry: ModulesRegistry,
 ) -> set[Path]:
     selection = target_files & changed_files
     target_files = target_files - selection
@@ -20,27 +72,13 @@ def select_files(
         # we already took everything
         return selection
 
-    file: Path | None
-    filepath: str | None
-    registry_fullnames: dict[str, Path] = {}
-    registry_paths: dict[Path, str] = {}
-    for name, module in modules.items():
-        if (
-            (filepath := getattr(module, "__file__", None))
-            and (file := Path(filepath))
-            and root in file.parents
-        ):
-            file = file.relative_to(root)
-            registry_fullnames[name] = file
-            registry_paths[file] = name
-
     queued: dict[Path, set[tuple[str, Path]]] = {}
 
     for target_file in list(target_files):
-        test_package = registry_paths.get(target_file)
+        test_package = modules_registry.get_name(target_file)
         acc = set()
         for dep_fullname in list_dependencies(target_file, package=test_package):
-            dep_file = registry_fullnames.get(dep_fullname)
+            dep_file = modules_registry.get(dep_fullname)
             if dep_file in changed_files:
                 target_files.discard(target_file)
                 selection.add(target_file)
@@ -64,7 +102,7 @@ def select_files(
                 if dep_file in explored[target_file]:
                     continue
                 for sub_fullname in list_dependencies(dep_file, package=dep_fullname):
-                    if sub_file := registry_fullnames.get(sub_fullname):
+                    if sub_file := modules_registry.get(sub_fullname):
                         if sub_file in changed_files:
                             target_files.discard(target_file)
                             selection.add(target_file)
@@ -82,6 +120,7 @@ def select_files(
             break
     else:
         raise RecursionError("Too many recursion")
+
     return selection
 
 
