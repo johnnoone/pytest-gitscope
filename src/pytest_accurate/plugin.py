@@ -17,6 +17,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("collect", "collection")
     group.addoption("--gitscope", help="Select tests based on git revision")
 
+    # Let user register custom short circuit files
+    parser.addini(
+        "gitscope_short_circuits",
+        "list of (relative) glob-style paths to be used for short circuit.",
+        type="paths",
+    )
+
 
 def pytest_configure(config: pytest.Config):
     # TODO: is it working with xdist?
@@ -60,6 +67,21 @@ def pytest_collection_modifyitems(
         Path("requirements.in"),
         Path("pytest.ini"),
     }
+
+    # Use user register custom short circuit files, because we got not match with default ones
+    custom_paths: list[Path]
+    if not short_circuit_files and (
+        custom_paths := config.getini("gitscope_short_circuits")
+    ):
+        unfolded_custom_paths: set[Path] = set()
+        for custom_path in custom_paths:
+            custom_path = custom_path.relative_to(root)
+            if "*" in str(custom_path):
+                unfolded_custom_paths.update(Path().glob(str(custom_path)))
+            else:
+                unfolded_custom_paths.add(custom_path)
+        short_circuit_files = changed_files & unfolded_custom_paths
+
     if short_circuit_files:
         # A file that may declare some external dependencies have been changed.
         # it safer to not try to filter
