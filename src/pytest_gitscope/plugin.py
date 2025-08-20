@@ -29,6 +29,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "gitscope_short_circuits",
         "list of (relative) glob-style paths to be used for short circuit.",
         type="paths",
+        default=default_short_circuit_files(),
     )
 
 
@@ -57,46 +58,25 @@ def pytest_collection_modifyitems(
     if rev is None:
         return
 
-    use_short_circuit = config.stash.get(USE_SHORT_CIRCUIT_KEY, True)
     root = session.startpath
     changed_files = get_changed_files(root, before=rev)
 
-    if use_short_circuit:
-        short_circuit_files = changed_files & {
-            Path("pyproject.toml"),
-            Path("requirements.txt"),
-            Path("poetry.lock"),
-            Path("uv.lock"),
-            Path("pylock.toml"),
-            Path("Pipfile.lock"),
-            Path("Pipfile"),
-            Path("pdm.lock"),
-            Path("setup.cfg"),
-            Path("setup.py"),
-            Path("requirements.in"),
-            Path("pytest.ini"),
-        }
+    if not changed_files:
+        return
 
-        # Use user register custom short circuit files, because we got not match with default ones
-        if not short_circuit_files and (
-            custom_paths := config.getini("gitscope_short_circuits")
-        ):
-            custom_path: Path
-            unfolded_custom_paths: set[Path] = set()
-            for custom_path in custom_paths:
-                custom_path = custom_path.relative_to(root)
-                if "*" in str(custom_path):
-                    unfolded_custom_paths.update(Path().glob(str(custom_path)))
-                else:
-                    unfolded_custom_paths.add(custom_path)
-            short_circuit_files = changed_files & unfolded_custom_paths
-
-        if short_circuit_files:
+    # Track changes of short circuit files. if a short circuit is changed, then short circuit the whole thing
+    # This kind of file usually declares dependencies that are difficult to inspect
+    if config.stash.get(USE_SHORT_CIRCUIT_KEY, True) and (
+        short_circuit_files := unfold_files(
+            root, config.getini("gitscope_short_circuits")
+        )
+    ):
+        if matched_short_circuit_files := changed_files & short_circuit_files:
             # A file that may declare some external dependencies have been changed.
             # it safer to not try to filter
             config.stash[POST_REPORT_KEY] = (
                 "The pytest-gitscope plugin won't try to deselect some tests, "
-                f"because these files ({', '.join(sorted(map(str, short_circuit_files)))}) have been changed since {rev}"
+                f"because these files ({', '.join(sorted(map(str, matched_short_circuit_files)))}) have been changed since {rev}"
             )
             return
 
@@ -167,3 +147,33 @@ def pytest_report_collectionfinish(
     if data := config.stash.get(POST_REPORT_KEY, default=None):
         return data
     return []
+
+
+def default_short_circuit_files():
+    return {
+        Path("pyproject.toml"),
+        Path("requirements.txt"),
+        Path("poetry.lock"),
+        Path("uv.lock"),
+        Path("pylock.toml"),
+        Path("Pipfile.lock"),
+        Path("Pipfile"),
+        Path("pdm.lock"),
+        Path("setup.cfg"),
+        Path("setup.py"),
+        Path("requirements.in"),
+        Path("pytest.ini"),
+    }
+
+
+def unfold_files(root: Path, custom_paths: list[Path] | None) -> set[Path]:
+    unfolded_files: set[Path] = set()
+    if custom_paths:
+        for custom_path in custom_paths:
+            if root in custom_path.parents:
+                custom_path = custom_path.relative_to(root)
+            if "*" in str(custom_path):
+                unfolded_files.update(Path().glob(str(custom_path)))
+            else:
+                unfolded_files.add(custom_path)
+    return unfolded_files

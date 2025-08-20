@@ -108,7 +108,7 @@ class Resolver:
                 dependency_names.add(dependency_name)
         return dependency_names
 
-    def unwind_files(self, mod: Module) -> Iterator[Path]:
+    def resolve_files(self, mod: Module) -> Iterator[Path]:
         resolved: set[str] = set()
         queue = [mod]
         while queue:
@@ -138,7 +138,7 @@ class Selector:
 
         for target_file in target_files:
             if mod := self.resolver.get_module_by_file(target_file):
-                for file in self.resolver.unwind_files(mod):
+                for file in self.resolver.resolve_files(mod):
                     if file in self.changed_files:
                         selection.add(target_file)
                         break
