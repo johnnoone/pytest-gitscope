@@ -4,7 +4,6 @@
 
 pytest-gitscope is a pragmatic pytest plugin that runs only the tests that matter. By analyzing your Git history, it intelligently determines which tests are affected by your changes, helping you ship faster.
 
-
 ## Features
 
 Testing everything on every change is thorough but impractical. pytest-gitscope follows the principle of "test what changed" – giving you confidence in your modifications while respecting your time.
@@ -28,7 +27,6 @@ pytest --gitscope main..feature-branch
 ```
 
 Perfect for CI/CD pipelines and local development to focus on what matters most.
-
 
 ## Understanding pytest-gitscope with a complete example
 
@@ -54,12 +52,14 @@ myproject/
 ### Step 1: Initial State
 
 Your project has 15 tests total:
+
 ```bash
 $ pytest --collect-only -q
 15 tests collected
 ```
 
 Running all tests takes 45 seconds:
+
 ```bash
 $ pytest
 ================ 15 passed in 45.23s ================
@@ -70,6 +70,7 @@ $ pytest
 You're working on a new feature and modify two files:
 
 **Changes to `src/calculator.py`:**
+
 ```python
 def add(a, b):
     return a + b
@@ -79,8 +80,10 @@ def multiply(a, b):  # ← NEW FUNCTION
 ```
 
 **Changes to `docs/README.md`:**
+
 ```markdown
 # MyProject
+
 Updated documentation with new examples...
 ```
 
@@ -103,17 +106,20 @@ $ pytest --gitscope HEAD~1
 **What happens internally:**
 
 1. **File Analysis**: pytest-gitscope runs `git diff --name-only HEAD~1`
+
    ```
    Changed files: ['src/calculator.py', 'docs/README.md']
    ```
 
 2. **Test Mapping**: It identifies which tests are affected:
+
    ```
    src/calculator.py → tests/test_calculator.py
    docs/README.md → (no tests affected)
    ```
 
 3. **Dependency Detection**: It scans for imports and finds:
+
    ```
    tests/test_integration.py imports calculator.py
    ```
@@ -128,6 +134,7 @@ $ pytest --gitscope HEAD~1
    ```
 
 **Output:**
+
 ```bash
 $ pytest --gitscope HEAD~1
 ========================== test session starts ==========================
@@ -143,36 +150,39 @@ tests/test_integration.py ✓✓✓
 
 ### Step 5: Compare the Results
 
-| Method | Tests Run | Time |
-|--------|-----------|------|
-| Regular pytest | 15 tests | 45.23s |
-| pytest --gitscope | 8 tests | 12.34s |
-| **Savings** | **7 tests skipped** | **73% faster** |
+| Method            | Tests Run           | Time           |
+| ----------------- | ------------------- | -------------- |
+| Regular pytest    | 15 tests            | 45.23s         |
+| pytest --gitscope | 8 tests             | 12.34s         |
+| **Savings**       | **7 tests skipped** | **73% faster** |
 
-### Real-World Scenarios
+## Real-World Scenarios
 
-#### Scenario 1: Feature Branch
+### Scenario 1: Feature Branch
+
 ```bash
 # Test only changes in your feature branch
 $ pytest --gitscope main..feature/new-auth
 gitscope: Selected 12 tests from 4 test files (28 tests skipped)
 ```
 
-#### Scenario 2: Last 3 Commits
+### Scenario 2: Last 3 Commits
+
 ```bash
 # Test changes from last 3 commits
 $ pytest --gitscope HEAD~3
 gitscope: Selected 6 tests from 2 test files (34 tests skipped)
 ```
 
-#### Scenario 3: Specific Files Only
+### Scenario 3: Specific Files Only
+
 ```bash
 # Test only your calculator changes
 $ pytest --gitscope HEAD~1 tests/test_calculator.py
 gitscope: Selected 5 tests from 1 test file (35 tests skipped)
 ```
 
-### What Gets Detected
+## What Gets Detected
 
 ✅ **Direct matches**: `src/calculator.py` → `tests/test_calculator.py`\
 ✅ **Import dependencies**: Files that import changed modules\
@@ -182,16 +192,14 @@ gitscope: Selected 5 tests from 1 test file (35 tests skipped)
 ❌ **Documentation only**: `README.md`, `*.md` files (configurable)\
 ❌ **Unrelated modules**: Files with no test connections
 
-
-
-
-### Important Note: Dependency Management
+## Important Note: Dependency Management
 
 ⚠️ **pytest-gitscope works best with projects using package managers like Poetry or uv.**
 
 Without a proper dependency manager, pytest-gitscope might miss some test dependencies. Here's why:
 
 **With Poetry/uv (Recommended):**
+
 ```python
 # pytest-gitscope can analyze pyproject.toml and lock files
 # to understand the full dependency graph
@@ -200,6 +208,7 @@ src/calculator.py → tests/test_math_integration.py ✓ (detected via deps)
 ```
 
 **Without package manager:**
+
 ```python
 # pytest-gitscope relies only on direct imports scanning
 src/calculator.py → tests/test_calculator.py ✓
@@ -207,12 +216,12 @@ src/calculator.py → tests/test_math_integration.py ? (might be missed)
 ```
 
 **Recommendation**: For best results, use pytest-gitscope in projects with:
+
 - `pyproject.toml` (Poetry, uv, setuptools)
 - `requirements.txt` with proper dependency tracking
 - Clear import patterns
 
-
-### Integration with CI/CD
+## Integration with CI/CD
 
 Perfect for speeding up your CI pipeline:
 
@@ -223,3 +232,15 @@ Perfect for speeding up your CI pipeline:
 ```
 
 This way, pull requests only run tests affected by the changes, dramatically reducing build times while maintaining confidence in your code quality.
+
+### Cookbooks
+
+**Disable short-circuiting on git push with gitlab-ci**
+
+Sometimes you want to disable short-circuiting because updating your pyproject.toml file does not change dependencies.
+
+Gitlab allows to provide CI/CD variables to the CI/CD pipeline, if one is created due to the push. Passes variables only to branch pipelines and not merge request pipelines.
+
+```bash
+git push -o ci.variable="PYTEST_ADDOPTS=--gitscope-no-short-circuits"
+```
