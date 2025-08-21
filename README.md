@@ -233,7 +233,7 @@ Perfect for speeding up your CI pipeline:
 
 This way, pull requests only run tests affected by the changes, dramatically reducing build times while maintaining confidence in your code quality.
 
-### Cookbooks
+## Cookbook
 
 **Disable short-circuiting on git push with gitlab-ci**
 
@@ -243,4 +243,12 @@ Gitlab allows to provide CI/CD variables to the CI/CD pipeline, if one is create
 
 ```bash
 git push -o ci.variable="PYTEST_ADDOPTS=--gitscope-no-short-circuits"
+```
+
+**Always include tests that depends on a module**
+
+The option `--gitscope-include-module` let you include tests that depends on this module — and its submodules too, due to the way modules are imported in python.
+
+```bash
+pytest --gitscope-include-module x.y.z tests/
 ```

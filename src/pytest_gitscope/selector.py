@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import cache
 from importlib.util import find_spec
@@ -108,25 +107,32 @@ class Resolver:
                 dependency_names.add(dependency_name)
         return dependency_names
 
-    def resolve_files(self, mod: Module) -> Iterator[Path]:
-        resolved: set[str] = set()
+    def match(self, mod: Module, *, files: set[Path], modules: set[Name]) -> bool:
+        if mod.name in modules:
+            return True
+        if mod.file in files:
+            return True
+        resolved: set[Name] = {mod.name}
         queue = [mod]
         while queue:
             mods, queue = queue, []
             for mod in mods:
-                if mod.file:
-                    yield mod.file
-                resolved.add(mod.name)
-
                 for dependency_name in self.infer_dependencies(mod) - resolved:
+                    resolved.add(mod.name)
+                    if dependency_name in modules:
+                        return True
                     if dependency := self.get_module(name=dependency_name):
+                        if dependency.file in files:
+                            return True
                         queue.append(dependency)
+        return False
 
 
 @dataclass
 class Selector:
     changed_files: set[Path]
     resolver: Resolver
+    included_modules: set[Name]
 
     def select_files(self, target_files: set[Path]) -> set[Path]:
         selection = target_files & self.changed_files
@@ -138,8 +144,8 @@ class Selector:
 
         for target_file in target_files:
             if mod := self.resolver.get_module_by_file(target_file):
-                for file in self.resolver.resolve_files(mod):
-                    if file in self.changed_files:
-                        selection.add(target_file)
-                        break
+                if self.resolver.match(
+                    mod, files=self.changed_files, modules=self.included_modules
+                ):
+                    selection.add(target_file)
         return selection

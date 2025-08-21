@@ -12,6 +12,7 @@ from .selector import Resolver, Selector
 POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
 REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
 USE_SHORT_CIRCUIT_KEY: pytest.StashKey[bool] = pytest.StashKey()
+INCLUDED_MODULES_KEY: pytest.StashKey[set[str]] = pytest.StashKey()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -22,6 +23,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="Do not use the short circuits",
+    )
+
+    group.addoption(
+        "--gitscope-include-module",
+        action="append",
+        metavar="MODULE",
+        help="Include tests that depends on this module and its submodules",
     )
 
     # Let user register custom short circuit files
@@ -38,6 +46,9 @@ def pytest_configure(config: pytest.Config):
         config.stash[REVISION_KEY] = rev
         config.stash[USE_SHORT_CIRCUIT_KEY] = not config.getoption(
             "--gitscope-no-short-circuits"
+        )
+        config.stash[INCLUDED_MODULES_KEY] = set(
+            config.getoption("--gitscope-include-module") or []
         )
 
 
@@ -98,6 +109,7 @@ def pytest_collection_modifyitems(
     selector = Selector(
         changed_files=changed_files,
         resolver=Resolver.from_modules(root=root, modules=sys.modules),
+        included_modules=config.stash[INCLUDED_MODULES_KEY],
     )
 
     # those will be our bases
