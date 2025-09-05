@@ -13,6 +13,7 @@ POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
 REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
 USE_SHORT_CIRCUIT_KEY: pytest.StashKey[bool] = pytest.StashKey()
 INCLUDED_MODULES_KEY: pytest.StashKey[set[str]] = pytest.StashKey()
+SUPPRESS_NO_TESTS_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -151,6 +152,7 @@ def pytest_collection_modifyitems(
             "Some tests have been deselected by pytest-gitscope plugin, "
             f"because they have not been affected by the changes from {rev}"
         )
+        config.stash[SUPPRESS_NO_TESTS_COLLECTED] = not remaining
 
 
 def pytest_report_collectionfinish(
@@ -159,6 +161,14 @@ def pytest_report_collectionfinish(
     if data := config.stash.get(POST_REPORT_KEY, default=None):
         return data
     return []
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session, exitstatus: pytest.ExitCode):
+    if (exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED) and session.config.stash.get(
+        SUPPRESS_NO_TESTS_COLLECTED, default=False
+    ):
+        session.exitstatus = pytest.ExitCode.OK
 
 
 def default_short_circuit_files():
