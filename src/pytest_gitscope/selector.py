@@ -85,6 +85,10 @@ class Resolver:
         if not mod.file:
             return dependency_names
 
+        if mod.file not in self.allowed_files:
+            # not in our scope
+            return dependency_names
+
         try:
             source = mod.file.read_text()
         except Exception as error:
