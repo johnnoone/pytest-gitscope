@@ -8,6 +8,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import NamedTuple, Self, TypeAlias
 
+from .diff import get_py_files
+
 Name: TypeAlias = str
 
 
@@ -42,7 +44,7 @@ class Resolver:
     def __post_init__(self) -> None:
         self.infer_dependencies = cache(self.infer_dependencies)  # type: ignore[method-assign]
         self.get_module = cache(self.get_module)  # type: ignore[method-assign]
-        self.venv_root = self.root / ".venv"
+        self.allowed_files = get_py_files(self.root)
 
     def get_module_by_file(self, file: Path) -> Module | None:
         if name := self.by_files.get(file):
@@ -69,12 +71,12 @@ class Resolver:
                 and (file := Path(spec.origin))
                 and file.suffix in (".py",)  # For now handle only python files
                 and (self.root in file.parents)
-                and (self.venv_root not in file.parents)  # Eliminate virtualenv folders
+                and (file := file.relative_to(self.root))
+                and (file in self.allowed_files)  # Eliminate virtualenv folders
             ):
-                file = file.relative_to(self.root)
+                return Module(name, file)
             else:
-                file = None
-            return Module(name, file)
+                return Module(name, None)
         return None
 
     def infer_dependencies(self, mod: Module) -> set[Name]:
