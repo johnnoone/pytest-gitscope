@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from .diff import get_changed_files
 from .selector import Resolver, Selector
+
+if TYPE_CHECKING:
+    from xdist.workermanage import WorkerController
+
 
 POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
 REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
@@ -199,3 +203,11 @@ def unfold_files(root: Path, custom_paths: list[Path] | None) -> set[Path]:
             else:
                 unfolded_files.add(custom_path)
     return unfolded_files
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node: WorkerController, error=None):
+    if (
+        node.workeroutput["exitstatus"] == pytest.ExitCode.NO_TESTS_COLLECTED
+    ) and node.config.stash.get(SUPPRESS_NO_TESTS_COLLECTED, default=False):
+        node.workeroutput["exitstatus"] = pytest.ExitCode.OK.value
