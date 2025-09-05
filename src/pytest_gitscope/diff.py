@@ -33,6 +33,6 @@ def get_py_files(base: PathLike[str] = Path(".")) -> set[Path]:
     acc = set()
     for p in result.stdout.decode().strip().split():
         path = Path(p)
-        if path.suffix == [".py"]:
+        if path.suffix in [".py"]:
             acc.add(path)
     return acc
