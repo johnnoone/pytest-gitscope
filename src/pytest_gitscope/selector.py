@@ -42,6 +42,7 @@ class Resolver:
     def __post_init__(self) -> None:
         self.infer_dependencies = cache(self.infer_dependencies)  # type: ignore[method-assign]
         self.get_module = cache(self.get_module)  # type: ignore[method-assign]
+        self.venv_root = self.root / ".venv"
 
     def get_module_by_file(self, file: Path) -> Module | None:
         if name := self.by_files.get(file):
@@ -66,7 +67,9 @@ class Resolver:
             if (
                 spec.origin
                 and (file := Path(spec.origin))
+                and file.suffix in (".py",)  # For now handle only python files
                 and (self.root in file.parents)
+                and (self.venv_root not in file.parents)  # Eliminate virtualenv folders
             ):
                 file = file.relative_to(self.root)
             else:
