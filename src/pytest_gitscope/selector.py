@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import warnings
 from dataclasses import dataclass, field
 from functools import cache
 from importlib.util import find_spec
@@ -146,17 +147,20 @@ class Selector:
     included_modules: set[Name]
 
     def select_files(self, target_files: set[Path]) -> set[Path]:
-        selection = target_files & self.changed_files
-        target_files = target_files - selection
+        with warnings.catch_warnings():
+            # Pytest may configure deprecation warnings, but because we are into a plugin, they are not relevant here
+            warnings.filterwarnings("ignore", category=DeprecationWarning)
+            selection = target_files & self.changed_files
+            target_files = target_files - selection
 
-        if not target_files:
-            # we already took everything
-            return selection
+            if not target_files:
+                # we already took everything
+                return selection
 
-        for target_file in target_files:
-            if mod := self.resolver.get_module_by_file(target_file):
-                if self.resolver.match(
-                    mod, files=self.changed_files, modules=self.included_modules
-                ):
-                    selection.add(target_file)
+            for target_file in target_files:
+                if mod := self.resolver.get_module_by_file(target_file):
+                    if self.resolver.match(
+                        mod, files=self.changed_files, modules=self.included_modules
+                    ):
+                        selection.add(target_file)
         return selection
