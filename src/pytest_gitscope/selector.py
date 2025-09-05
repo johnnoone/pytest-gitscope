@@ -79,7 +79,13 @@ class Resolver:
         if not mod.file:
             return dependency_names
 
-        source = mod.file.read_text()
+        try:
+            source = mod.file.read_text()
+        except Exception as error:
+            error.add_note(f"Current file {mod.file} is expected to be a dependency")
+            error.add_note(f"Dependency name is {mod.name}")
+            raise error
+
         parts = tuple(mod.name.split("."))
         tree = ast.parse(source, filename=mod.file)
         for node in ast.walk(tree):
