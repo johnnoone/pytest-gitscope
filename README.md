@@ -235,6 +235,19 @@ This way, pull requests only run tests affected by the changes, dramatically red
 
 ## Cookbook
 
+**Use gitscope on gitlab-ci**
+
+Because gitlab-ci fetch the latest commit on detached mode,
+you will need to fetch the target branch as a prerequisite.
+
+```yml
+Job:
+  before_script:
+    - git fetch --depth=1 origin ${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_DEFAULT_BRANCH}
+  script:
+    - pytest --gitscope origin/${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_DEFAULT_BRANCH}
+```
+
 **Disable short-circuiting on git push with gitlab-ci**
 
 Sometimes you want to disable short-circuiting because updating your pyproject.toml file does not change dependencies.
