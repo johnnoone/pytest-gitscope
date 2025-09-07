@@ -2,22 +2,19 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
 from .diff import get_changed_files
 from .selector import Resolver, Selector
 
-if TYPE_CHECKING:
-    from xdist.workermanage import WorkerController
-
-
 POST_REPORT_KEY: pytest.StashKey[str] = pytest.StashKey()
 REVISION_KEY: pytest.StashKey[str] = pytest.StashKey()
 USE_SHORT_CIRCUIT_KEY: pytest.StashKey[bool] = pytest.StashKey()
 INCLUDED_MODULES_KEY: pytest.StashKey[set[str]] = pytest.StashKey()
 SUPPRESS_NO_TESTS_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
+USING_XDIST: pytest.StashKey[bool] = pytest.StashKey()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -169,10 +166,17 @@ def pytest_report_collectionfinish(
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: pytest.ExitCode):
-    if (exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED) and session.config.stash.get(
-        SUPPRESS_NO_TESTS_COLLECTED, default=False
-    ):
-        session.exitstatus = pytest.ExitCode.OK
+    if session.config.stash.get(REVISION_KEY, default=""):
+        if exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED:
+            if session.config.stash.get(SUPPRESS_NO_TESTS_COLLECTED, default=False):
+                session.exitstatus = pytest.ExitCode.OK
+            elif session.config.stash.get(USING_XDIST, default=False):
+                session.exitstatus = pytest.ExitCode.OK
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_setupnodes(config: pytest.Config, specs: Any) -> None:
+    config.stash[USING_XDIST] = True
 
 
 def default_short_circuit_files():
@@ -203,11 +207,3 @@ def unfold_files(root: Path, custom_paths: list[Path] | None) -> set[Path]:
             else:
                 unfolded_files.add(custom_path)
     return unfolded_files
-
-
-@pytest.hookimpl(optionalhook=True)
-def pytest_testnodedown(node: WorkerController, error=None):
-    if (
-        node.workeroutput["exitstatus"] == pytest.ExitCode.NO_TESTS_COLLECTED
-    ) and node.config.stash.get(SUPPRESS_NO_TESTS_COLLECTED, default=False):
-        node.workeroutput["exitstatus"] = pytest.ExitCode.OK.value
