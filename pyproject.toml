@@ -1,6 +1,6 @@
 [project]
 name = "pytest-gitscope"
-version = "0.7.0"
+version = "0.7.1"
 description = "A pragmatic pytest plugin that runs only the tests that matter, and ship faster"
 readme = "README.md"
 authors = [{ name = "Xavier Barbosa", email = "clint.northwood@gmail.com" }]
@@ -36,15 +36,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = [
-    "mypy>=1.17.1",
-    "pytest>=8.4.1",
-    "pytest-xsdist",
-    "ruff>=0.12.9",
-]
+dev = ["mypy>=1.17.1", "pytest>=8.4.1", "pytest-xdist", "ruff>=0.12.9"]
 
 [project.entry-points.pytest11]
-git_diff = "pytest_gitscope.plugin"
+pytest_gitscope = "pytest_gitscope.plugin"
 
 [tool.ruff]
 
